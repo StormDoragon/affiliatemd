@@ -47,6 +47,8 @@ p {
   padding: 2rem;
   display: grid;
   gap: 1.25rem;
+  max-width: 1100px;
+  margin: 0 auto;
 }
 
 .dashboard-head h1 {
@@ -76,14 +78,20 @@ p {
   font-size: 1.6rem;
 }
 
-.split-panel,
-.suggestions-panel,
-.programs-panel,
-.ad-panel {
+.panel {
   background: #ffffff;
   border: 1px solid #e0e3da;
   border-radius: 14px;
   padding: 1rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+.panel-head p {
+  margin: 0.35rem 0 0.9rem;
+  color: #4e5960;
 }
 
 .split-row {
@@ -101,4 +109,89 @@ p {
 .ad-panel ul {
   margin: 0.75rem 0 0;
   padding-left: 1.25rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.97rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.65rem 0.6rem;
+  border-bottom: 1px solid #e8ece4;
+}
+
+.data-table th {
+  color: #4e5960;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.data-table tfoot td {
+  font-weight: 700;
+}
+
+.post-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.post-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #e8ece4;
+  border-radius: 12px;
+  padding: 0.85rem 0.9rem;
+  background: #fcfdf9;
+}
+
+.post-item h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.post-item p {
+  margin: 0.3rem 0 0;
+  font-size: 0.9rem;
+  color: #4e5960;
+}
+
+.post-money {
+  font-weight: 800;
+  color: #243a2f;
+}
+
+.split-inline {
+  margin-top: 0.95rem;
+  border-top: 1px dashed #d8dcd2;
+  padding-top: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .dashboard-page {
+    padding: 1rem;
+  }
+
+  .post-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
 }
