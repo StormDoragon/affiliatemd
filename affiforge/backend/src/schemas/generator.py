@@ -22,3 +22,21 @@ class GeneratePostRequest(BaseModel):
 
 class PublishPostRequest(BaseModel):
     site_id: int
+
+
+class ClusterGenerateRequest(BaseModel):
+    seed_keyword: str
+    audience: str
+    cluster_size: int = Field(default=8, ge=3, le=25)
+
+
+class ClusterItem(BaseModel):
+    keyword: str
+    title: str
+    search_intent: str
+    brief: str
+
+
+class ClusterGenerateResponse(BaseModel):
+    seed_keyword: str
+    items: list[ClusterItem]

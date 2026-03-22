@@ -21,6 +21,14 @@ def _auth_headers(client: TestClient) -> dict[str, str]:
 def test_auth_site_scan_generate_publish_and_billing_flow(client: TestClient) -> None:
     headers = _auth_headers(client)
 
+    cluster_resp = client.post(
+        "/generator/cluster",
+        headers=headers,
+        json={"seed_keyword": "best mechanical keyboard", "audience": "remote workers", "cluster_size": 4},
+    )
+    assert cluster_resp.status_code == 200
+    assert len(cluster_resp.json()["items"]) == 4
+
     site_resp = client.post(
         "/sites/",
         headers=headers,
@@ -100,9 +108,21 @@ def test_auth_site_scan_generate_publish_and_billing_flow(client: TestClient) ->
     )
     assert earning_resp.status_code == 201
 
+    impact_resp = client.post(
+        "/earnings/",
+        headers=headers,
+        json={
+            "network": "impact",
+            "amount": 12.25,
+            "currency": "USD",
+            "content_item_id": post_id,
+        },
+    )
+    assert impact_resp.status_code == 201
+
     summary_resp = client.get("/earnings/summary", headers=headers)
     assert summary_resp.status_code == 200
-    assert summary_resp.json()["revenue"] == 18.75
+    assert summary_resp.json()["revenue"] == 31.0
 
     profitshare_resp = client.get("/earnings/profitshare", headers=headers)
     assert profitshare_resp.status_code == 200
@@ -112,6 +132,18 @@ def test_auth_site_scan_generate_publish_and_billing_flow(client: TestClient) ->
     suggestions_resp = client.get("/earnings/suggestions", headers=headers)
     assert suggestions_resp.status_code == 200
     assert len(suggestions_resp.json()["suggestions"]) >= 1
+
+    programs_resp = client.get("/earnings/programs", headers=headers)
+    assert programs_resp.status_code == 200
+    assert len(programs_resp.json()["programs"]) >= 2
+
+    ad_opt_resp = client.post(
+        "/earnings/ad-optimizer",
+        headers=headers,
+        json={"ga4_sessions": 2500, "pageviews": 4200, "adsense_revenue": 39.5, "adsense_ctr": 0.008},
+    )
+    assert ad_opt_resp.status_code == 200
+    assert "rpm" in ad_opt_resp.json()
 
     dashboard_resp = client.get("/earnings/dashboard", headers=headers)
     assert dashboard_resp.status_code == 200

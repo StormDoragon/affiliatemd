@@ -42,3 +42,28 @@ class DashboardOverview(BaseModel):
     summary: EarningsSummary
     profit_share: ProfitShareBreakdown
     suggestions: list[str]
+
+
+class ProgramEarningsBreakdown(BaseModel):
+    network: str
+    revenue: float
+    events: int
+
+
+class MultiProgramDashboard(BaseModel):
+    total_revenue: float
+    programs: list[ProgramEarningsBreakdown]
+
+
+class AdOptimizerRequest(BaseModel):
+    ga4_sessions: int = Field(ge=0)
+    pageviews: int = Field(ge=0)
+    adsense_revenue: float = Field(ge=0)
+    adsense_ctr: float = Field(ge=0)
+
+
+class AdOptimizerResponse(BaseModel):
+    rpm: float
+    session_depth: float
+    projected_rpm_uplift: float
+    suggestions: list[str]

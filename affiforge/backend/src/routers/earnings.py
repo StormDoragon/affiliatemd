@@ -1,17 +1,23 @@
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..dependencies import get_current_user, get_db
 from ..models.earning_event import EarningEvent
 from ..models.user import User
 from ..schemas.earnings import (
+    AdOptimizerRequest,
+    AdOptimizerResponse,
     DashboardOverview,
     EarningCreate,
     EarningRead,
     EarningsSummary,
+    MultiProgramDashboard,
     OptimizationSuggestions,
+    ProgramEarningsBreakdown,
     ProfitShareBreakdown,
 )
+from ..services.ad_revenue_optimizer import AdRevenueOptimizer
 from ..services.earnings_tracker import EarningsTracker
 from ..services.optimization_service import OptimizationService
 from ..services.profitshare_engine import ProfitShareEngine
@@ -112,3 +118,47 @@ def dashboard_overview(
         profit_share=ProfitShareBreakdown(**breakdown),
         suggestions=suggestions,
     )
+
+
+@router.get("/programs", response_model=MultiProgramDashboard)
+def multi_program_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MultiProgramDashboard:
+    rows = (
+        db.query(
+            EarningEvent.network,
+            func.count(EarningEvent.id).label("events"),
+            func.sum(EarningEvent.amount).label("revenue"),
+        )
+        .filter(EarningEvent.owner_id == current_user.id)
+        .group_by(EarningEvent.network)
+        .all()
+    )
+
+    programs = [
+        ProgramEarningsBreakdown(
+            network=str(row.network),
+            events=int(row.events or 0),
+            revenue=float(row.revenue or 0),
+        )
+        for row in rows
+    ]
+    total_revenue = round(sum(program.revenue for program in programs), 2)
+
+    return MultiProgramDashboard(total_revenue=total_revenue, programs=programs)
+
+
+@router.post("/ad-optimizer", response_model=AdOptimizerResponse)
+def ad_revenue_optimizer(
+    payload: AdOptimizerRequest,
+    _: User = Depends(get_current_user),
+) -> AdOptimizerResponse:
+    optimizer = AdRevenueOptimizer()
+    result = optimizer.optimize(
+        ga4_sessions=payload.ga4_sessions,
+        pageviews=payload.pageviews,
+        adsense_revenue=payload.adsense_revenue,
+        adsense_ctr=payload.adsense_ctr,
+    )
+    return AdOptimizerResponse(**result)

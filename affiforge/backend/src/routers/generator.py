@@ -5,11 +5,31 @@ from ..dependencies import get_current_user, get_db
 from ..models.content_item import ContentItem
 from ..models.site import Site
 from ..models.user import User
-from ..schemas.generator import GeneratePostRequest, RedditScanRequest, RedditScanResponse
+from ..schemas.generator import (
+    ClusterGenerateRequest,
+    ClusterGenerateResponse,
+    GeneratePostRequest,
+    RedditScanRequest,
+    RedditScanResponse,
+)
 from ..services.ai_service import AIService
 from ..services.reddit_service import RedditService
 
 router = APIRouter(prefix="/generator", tags=["generator"])
+
+
+@router.post("/cluster", response_model=ClusterGenerateResponse)
+def generate_cluster(
+    payload: ClusterGenerateRequest,
+    _: User = Depends(get_current_user),
+) -> ClusterGenerateResponse:
+    ai = AIService()
+    items = ai.generate_content_cluster(
+        seed_keyword=payload.seed_keyword,
+        audience=payload.audience,
+        cluster_size=payload.cluster_size,
+    )
+    return ClusterGenerateResponse(seed_keyword=payload.seed_keyword, items=items)
 
 
 @router.post("/reddit-scan", response_model=RedditScanResponse)

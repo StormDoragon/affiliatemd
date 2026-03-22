@@ -18,3 +18,16 @@ class AIService:
 			"framework so you can pick confidently."
 		)
 		return {"title": title, "body": body}
+
+	def generate_content_cluster(self, seed_keyword: str, audience: str, cluster_size: int) -> list[dict[str, str]]:
+		cluster = []
+		for index in range(1, cluster_size + 1):
+			cluster.append(
+				{
+					"keyword": f"{seed_keyword} {index}",
+					"title": f"{seed_keyword.title()} Guide #{index} for {audience}",
+					"search_intent": "commercial",
+					"brief": f"Address {audience} pain points with product-led recommendations and buyer triggers.",
+				}
+			)
+		return cluster

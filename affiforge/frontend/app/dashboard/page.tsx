@@ -13,6 +13,17 @@ type DashboardPayload = {
     ratio: number;
   };
   suggestions: string[];
+  programs: Array<{
+    network: string;
+    revenue: number;
+    events: number;
+  }>;
+  adOptimizer: {
+    rpm: number;
+    sessionDepth: number;
+    projectedRpmUplift: number;
+    suggestions: string[];
+  };
 };
 
 const fallbackData: DashboardPayload = {
@@ -33,6 +44,20 @@ const fallbackData: DashboardPayload = {
     "Publish at least 3 comparison posts to diversify affiliate entry points.",
     "Improve product-intent CTAs near comparison tables to lift EPC.",
   ],
+  programs: [
+    { network: "amazon", revenue: 121.8, events: 6 },
+    { network: "impact", revenue: 42.6, events: 2 },
+    { network: "clickbank", revenue: 18.0, events: 1 },
+  ],
+  adOptimizer: {
+    rpm: 9.4,
+    sessionDepth: 1.68,
+    projectedRpmUplift: 1.41,
+    suggestions: [
+      "Test higher-RPM ad placements above the fold on comparison content.",
+      "Increase ad visibility with cleaner spacing around high-intent sections.",
+    ],
+  },
 };
 
 function formatMoney(value: number): string {
@@ -90,6 +115,39 @@ export default function DashboardPage() {
         <ul>
           {data.suggestions.map((item) => (
             <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="programs-panel">
+        <h2>Multi-Program Dashboard</h2>
+        {data.programs.map((program) => (
+          <div className="split-row" key={program.network}>
+            <span>
+              {program.network} ({program.events} events)
+            </span>
+            <strong>{formatMoney(program.revenue)}</strong>
+          </div>
+        ))}
+      </section>
+
+      <section className="ad-panel">
+        <h2>Ad Revenue Optimizer (GA4 + AdSense)</h2>
+        <div className="split-row">
+          <span>Current RPM</span>
+          <strong>{formatMoney(data.adOptimizer.rpm)}</strong>
+        </div>
+        <div className="split-row">
+          <span>Session Depth</span>
+          <strong>{data.adOptimizer.sessionDepth.toFixed(2)}</strong>
+        </div>
+        <div className="split-row">
+          <span>Projected RPM Uplift</span>
+          <strong>{formatMoney(data.adOptimizer.projectedRpmUplift)}</strong>
+        </div>
+        <ul>
+          {data.adOptimizer.suggestions.map((tip) => (
+            <li key={tip}>{tip}</li>
           ))}
         </ul>
       </section>
