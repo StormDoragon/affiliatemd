@@ -10,6 +10,8 @@ class Settings(BaseSettings):
 	database_url: str = "sqlite:///./affiforge.db"
 	redis_url: str = "redis://localhost:6379/0"
 	openai_api_key: str = ""
+	claude_api_key: str = ""
+	max_cost_per_task: float = 0.12
 	jwt_secret_key: str = "dev-change-me"
 	jwt_algorithm: str = "HS256"
 	access_token_expire_minutes: int = 60
