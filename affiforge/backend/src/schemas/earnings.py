@@ -17,3 +17,28 @@ class EarningRead(BaseModel):
     owner_id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class EarningsSummary(BaseModel):
+    posts_count: int
+    revenue: float
+    earnings_count: int
+    epc: float
+
+
+class ProfitShareBreakdown(BaseModel):
+    enabled: bool
+    total_revenue: float
+    platform_share: float
+    user_share: float
+    ratio: float
+
+
+class OptimizationSuggestions(BaseModel):
+    suggestions: list[str]
+
+
+class DashboardOverview(BaseModel):
+    summary: EarningsSummary
+    profit_share: ProfitShareBreakdown
+    suggestions: list[str]

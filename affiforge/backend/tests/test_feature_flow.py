@@ -87,3 +87,32 @@ def test_auth_site_scan_generate_publish_and_billing_flow(client: TestClient) ->
     )
     assert invoice_resp.status_code == 200
     assert invoice_resp.json()["status"] == "created"
+
+    earning_resp = client.post(
+        "/earnings/",
+        headers=headers,
+        json={
+            "network": "amazon",
+            "amount": 18.75,
+            "currency": "USD",
+            "content_item_id": post_id,
+        },
+    )
+    assert earning_resp.status_code == 201
+
+    summary_resp = client.get("/earnings/summary", headers=headers)
+    assert summary_resp.status_code == 200
+    assert summary_resp.json()["revenue"] == 18.75
+
+    profitshare_resp = client.get("/earnings/profitshare", headers=headers)
+    assert profitshare_resp.status_code == 200
+    assert profitshare_resp.json()["enabled"] is True
+    assert profitshare_resp.json()["platform_share"] > 0
+
+    suggestions_resp = client.get("/earnings/suggestions", headers=headers)
+    assert suggestions_resp.status_code == 200
+    assert len(suggestions_resp.json()["suggestions"]) >= 1
+
+    dashboard_resp = client.get("/earnings/dashboard", headers=headers)
+    assert dashboard_resp.status_code == 200
+    assert "summary" in dashboard_resp.json()

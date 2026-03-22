@@ -9,7 +9,14 @@ from .billing import (
 	ProfitShareToggleRequest,
 )
 from .content import ContentCreate, ContentRead
-from .earnings import EarningCreate, EarningRead
+from .earnings import (
+	DashboardOverview,
+	EarningCreate,
+	EarningRead,
+	EarningsSummary,
+	OptimizationSuggestions,
+	ProfitShareBreakdown,
+)
 from .generator import GeneratePostRequest, PublishPostRequest, RedditScanRequest, RedditScanResponse
 from .scan import ScanCreate, ScanRead
 from .site import SiteCreate, SiteRead
@@ -28,6 +35,10 @@ __all__ = [
 	"ScanRead",
 	"EarningCreate",
 	"EarningRead",
+	"EarningsSummary",
+	"ProfitShareBreakdown",
+	"OptimizationSuggestions",
+	"DashboardOverview",
 	"RedditScanRequest",
 	"RedditScanResponse",
 	"GeneratePostRequest",
