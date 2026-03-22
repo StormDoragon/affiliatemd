@@ -12,6 +12,9 @@ class Settings(BaseSettings):
 	openai_api_key: str = ""
 	claude_api_key: str = ""
 	max_cost_per_task: float = 0.12
+	api_rate_limit_per_minute: int = 30
+	api_usage_alert_ratio: float = 0.8
+	enable_api_guardrails: bool = True
 	jwt_secret_key: str = "dev-change-me"
 	jwt_algorithm: str = "HS256"
 	access_token_expire_minutes: int = 60

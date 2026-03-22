@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_current_user, get_db
+from ..dependencies import enforce_api_guardrails, get_current_user, get_db
 from ..models.content_item import ContentItem
 from ..models.site import Site
 from ..models.user import User
@@ -21,8 +21,17 @@ router = APIRouter(prefix="/generator", tags=["generator"])
 @router.post("/cluster", response_model=ClusterGenerateResponse)
 def generate_cluster(
     payload: ClusterGenerateRequest,
-    _: User = Depends(get_current_user),
+    request: Request,
+    current_user: User = Depends(get_current_user),
 ) -> ClusterGenerateResponse:
+    # Rough estimated cost scales with cluster size; blocked if it exceeds configured cap.
+    enforce_api_guardrails(
+        request,
+        current_user,
+        estimated_cost=round(0.01 * payload.cluster_size, 4),
+        endpoint="generator.cluster",
+    )
+
     ai = AIService()
     items = ai.generate_content_cluster(
         seed_keyword=payload.seed_keyword,
@@ -35,8 +44,17 @@ def generate_cluster(
 @router.post("/reddit-scan", response_model=RedditScanResponse)
 def reddit_scan(
     payload: RedditScanRequest,
-    _: User = Depends(get_current_user),
+    request: Request,
+    current_user: User = Depends(get_current_user),
 ) -> RedditScanResponse:
+    # Reddit scan is low LLM-cost but still rate-limited and usage-logged.
+    enforce_api_guardrails(
+        request,
+        current_user,
+        estimated_cost=0.002,
+        endpoint="generator.reddit_scan",
+    )
+
     scanner = RedditService()
     result = scanner.discover_topics(subreddit=payload.subreddit, query=payload.query, limit=payload.limit)
     topics = [
@@ -53,9 +71,17 @@ def reddit_scan(
 @router.post("/generate", status_code=status.HTTP_201_CREATED)
 def generate_post(
     payload: GeneratePostRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str | int]:
+    enforce_api_guardrails(
+        request,
+        current_user,
+        estimated_cost=0.02,
+        endpoint="generator.generate_post",
+    )
+
     site = db.query(Site).filter(Site.id == payload.site_id, Site.user_id == current_user.id).first()
     if site is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found")
