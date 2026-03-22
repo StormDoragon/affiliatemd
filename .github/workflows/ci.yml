@@ -1,0 +1,21 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r affiforge/backend/requirements.txt
+      - run: pytest affiforge/backend/tests/ --cov=affiforge --cov-report=xml
+      - name: Lint
+        run: ruff check affiforge/backend && black --check affiforge/backend
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          verbose: true

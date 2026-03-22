@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: affiforge-postgres
+    environment:
+      POSTGRES_USER: affiforge
+      POSTGRES_PASSWORD: affiforge_dev_password
+      POSTGRES_DB: affiforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U affiforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Celery Broker
+  redis:
+    image: redis:7-alpine
+    container_name: affiforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile.backend
+    container_name: affiforge-backend
+    command: uvicorn affiforge.backend.src.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://affiforge:affiforge_dev_password@postgres:5432/affiforge
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      SECRET_KEY: dev-secret-key-change-in-production
+      LOG_LEVEL: INFO
+      ENABLE_CELERY_TASKS: "true"
+    volumes:
+      - ../affiforge/backend/src:/app/affiforge/backend/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Worker (Background Tasks)
+  celery-worker:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile.backend
+    container_name: affiforge-celery-worker
+    command: celery -A affiforge.backend.src.tasks worker --loglevel=info --concurrency=4
+    environment:
+      DATABASE_URL: postgresql://affiforge:affiforge_dev_password@postgres:5432/affiforge
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      SECRET_KEY: dev-secret-key-change-in-production
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+      SERPER_API_KEY: ${SERPER_API_KEY}
+      LOG_LEVEL: INFO
+    volumes:
+      - ../affiforge/backend/src:/app/affiforge/backend/src
+    depends_on:
+      - postgres
+      - redis
+      - backend
+
+  # Celery Beat (Task Scheduler)
+  celery-beat:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile.backend
+    container_name: affiforge-celery-beat
+    command: celery -A affiforge.backend.src.tasks beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      DATABASE_URL: postgresql://affiforge:affiforge_dev_password@postgres:5432/affiforge
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      SECRET_KEY: dev-secret-key-change-in-production
+      LOG_LEVEL: INFO
+    depends_on:
+      - postgres
+      - redis
+      - backend
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ../affiforge/frontend
+      dockerfile: ../../infra/Dockerfile.frontend
+    container_name: affiforge-frontend
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:8000/api/v1
+      NEXT_PUBLIC_ENV: development
+    volumes:
+      - ../affiforge/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: affiforge-network
+    driver: bridge
