@@ -1,13 +1,7 @@
 # Monetization
 
-Primary channels:
+Stripe subscription logic
 
-- Amazon Associates
-- SaaS affiliate programs
-- Digital product referrals
+ProfitShare flow: user enables -> we generate posts with ?tag=affiforge123 -> monthly AI parses uploaded Amazon CSV -> calculates split -> auto-invoices via Stripe
 
-KPIs:
-
-- Earnings per click (EPC)
-- Conversion rate
-- Revenue per article
+Refund policy: if user makes $0 in first 30 days from our content -> full refund

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from . import models
 from .config import settings
 from .db import Base, engine
-from .routers import content, earnings, scans, users
+from .routers import billing, content, earnings, generator, scans, sites, users
 
 app = FastAPI(
 	title=settings.app_name,
@@ -13,9 +13,12 @@ app = FastAPI(
 )
 
 app.include_router(users.router)
+app.include_router(sites.router)
+app.include_router(generator.router)
 app.include_router(content.router)
 app.include_router(scans.router)
 app.include_router(earnings.router)
+app.include_router(billing.router)
 
 
 @app.on_event("startup")

@@ -2,16 +2,8 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from src.db import Base, engine
-from src.main import app
 
-
-def setup_module() -> None:
-    Base.metadata.create_all(bind=engine)
-
-
-def test_register_login_and_access_protected_routes() -> None:
-    client = TestClient(app)
+def test_register_login_and_access_protected_routes(client: TestClient) -> None:
     email = f"user-{uuid.uuid4().hex[:8]}@example.com"
     password = "strong-pass-123"
 
@@ -39,7 +31,6 @@ def test_register_login_and_access_protected_routes() -> None:
     assert content_response.status_code == 201
 
 
-def test_protected_endpoint_requires_token() -> None:
-    client = TestClient(app)
+def test_protected_endpoint_requires_token(client: TestClient) -> None:
     response = client.get("/users/")
     assert response.status_code == 401

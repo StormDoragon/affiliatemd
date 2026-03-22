@@ -12,7 +12,10 @@ class ContentRead(BaseModel):
     title: str
     slug: str
     body: str
+    keyword: str | None
+    reddit_thread_id: str | None
     status: str
+    site_id: int | None
     owner_id: int
 
     model_config = ConfigDict(from_attributes=True)

@@ -13,6 +13,11 @@ class Settings(BaseSettings):
 	jwt_secret_key: str = "dev-change-me"
 	jwt_algorithm: str = "HS256"
 	access_token_expire_minutes: int = 60
+	stripe_secret_key: str = ""
+	stripe_webhook_secret: str = ""
+	reddit_client_id: str = ""
+	reddit_client_secret: str = ""
+	reddit_user_agent: str = "affiforge/0.1"
 
 	model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
