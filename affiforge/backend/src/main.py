@@ -27,6 +27,15 @@ def on_startup() -> None:
 	Base.metadata.create_all(bind=engine)
 
 
+def _health_payload() -> dict[str, str]:
+	return {"status": "ok"}
+
+
 @app.get("/healthz", tags=["health"])
 def healthcheck() -> dict[str, str]:
-	return {"status": "ok"}
+	return _health_payload()
+
+
+@app.get("/health", tags=["health"])
+def healthcheck_legacy() -> dict[str, str]:
+	return _health_payload()

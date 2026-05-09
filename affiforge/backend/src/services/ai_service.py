@@ -221,6 +221,11 @@ Return: {{"type": "...", "recommendation": "...", "estimated_lift": "25-30%"}}""
     
     def generate_content_cluster(self, seed_keyword: str, audience: str, cluster_size: int) -> list:
         return [
-            {"keyword": f"{seed_keyword} {i}", "title": f"Guide #{i} for {audience}"}
+            {
+                "keyword": f"{seed_keyword} {i}",
+                "title": f"Guide #{i} for {audience}",
+                "search_intent": "commercial investigation",
+                "brief": f"Cover practical buying guidance for {audience} evaluating {seed_keyword} options.",
+            }
             for i in range(1, cluster_size + 1)
         ]

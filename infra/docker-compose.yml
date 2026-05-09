@@ -68,7 +68,7 @@ services:
       context: ../
       dockerfile: infra/Dockerfile.backend
     container_name: affiforge-celery-worker
-    command: celery -A affiforge.backend.src.tasks worker --loglevel=info --concurrency=4
+    command: celery -A affiforge.backend.src.tasks:app worker --loglevel=info --concurrency=4
     environment:
       DATABASE_URL: postgresql://affiforge:affiforge_dev_password@postgres:5432/affiforge
       REDIS_URL: redis://redis:6379/0
@@ -91,7 +91,7 @@ services:
       context: ../
       dockerfile: infra/Dockerfile.backend
     container_name: affiforge-celery-beat
-    command: celery -A affiforge.backend.src.tasks beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A affiforge.backend.src.tasks:app beat --loglevel=info
     environment:
       DATABASE_URL: postgresql://affiforge:affiforge_dev_password@postgres:5432/affiforge
       REDIS_URL: redis://redis:6379/0
@@ -113,7 +113,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://backend:8000/api/v1
+      NEXT_PUBLIC_API_URL: http://backend:8000
       NEXT_PUBLIC_ENV: development
     volumes:
       - ../affiforge/frontend:/app

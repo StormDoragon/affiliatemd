@@ -1,19 +1,23 @@
-"""
-Celery tasks for background processing: cluster generation, publishing, revenue tracking.
-"""
+"""Celery tasks for cluster generation, publishing, and periodic jobs."""
 
-from celery import shared_task, Celery
-import json
+from __future__ import annotations
+
+import re
 import time
 from datetime import datetime
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from celery import Celery
+from celery.schedules import crontab
 
-from .db import SessionLocal
-from .config import settings
+from ..config import settings
+from ..db import SessionLocal
+from ..models.content_item import ContentItem
+from ..models.site import Site
+from ..models.user import User
+from ..services.ai_service import AIService
+from ..services.wordpress_service import WordpressService
 
-# Initialize Celery app
+
 celery_app = Celery(
     "affiforge",
     broker=settings.redis_url,
@@ -27,214 +31,208 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutes hard limit
+    task_time_limit=30 * 60,
 )
 
+celery_app.conf.beat_schedule = {
+    "sync-earnings-nightly": {
+        "task": "sync_earnings_from_amazon",
+        "schedule": crontab(hour=2, minute=0),
+    },
+    "calculate-revenue-share-monthly": {
+        "task": "calculate_revenue_share",
+        "schedule": crontab(hour=3, minute=0, day_of_month=1),
+    },
+}
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+
+def _slugify(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug[:64] or "post"
+
+
+def _unique_slug(db, base_slug: str) -> str:
+    candidate = base_slug
+    index = 1
+    while db.query(ContentItem).filter(ContentItem.slug == candidate).first() is not None:
+        suffix = f"-{index}"
+        candidate = f"{base_slug[: max(1, 64 - len(suffix))]}{suffix}"
+        index += 1
+    return candidate
+
+
+@celery_app.task(name="generate_cluster_task", bind=True, max_retries=3, default_retry_delay=60)
 def generate_cluster_task(self, user_id: str, site_id: str, reddit_data: dict, niche: str, audience: str):
-    """
-    Celery task: Generate full cluster (1 pillar + 8 posts).
-    Tracks cost and stores result in llm_tasks table.
-    """
-    from .models.llm_task import LLMTask
-    from .services.ai_service import AIService
-    
+    """Generate a content cluster and persist draft posts."""
     db = SessionLocal()
-    llm_task = None
-    
+
     try:
-        # Create llm_task record
-        llm_task = LLMTask(
-            task_id=self.request.id,
-            user_id=user_id,
-            site_id=site_id,
-            task_type="generate_cluster",
-            model="gpt-4o",
-            status="pending",
-            started_at=datetime.utcnow(),
-        )
-        db.add(llm_task)
-        db.commit()
-        db.refresh(llm_task)
-        
-        # Generate cluster
+        user_id_int = int(user_id)
+        site_id_int = int(site_id)
+    except ValueError:
+        db.close()
+        return {"status": "failed", "error": "Invalid user_id or site_id"}
+
+    try:
+        site = db.query(Site).filter(Site.id == site_id_int, Site.user_id == user_id_int).first()
+        if site is None:
+            return {"status": "failed", "error": "Site not found or unauthorized"}
+
         ai_service = AIService(model="gpt-4o")
-        start_time = time.time()
-        
         result = ai_service.generate_cluster(
             reddit_data=reddit_data,
             niche=niche,
             audience=audience,
         )
-        
-        duration = time.time() - start_time
-        
-        if result["status"] != "success":
-            llm_task.status = "failed"
-            llm_task.error_message = result.get("error", "Unknown error")
-            llm_task.completed_at = datetime.utcnow()
-            llm_task.duration_seconds = int(duration)
-            db.commit()
-            return {"status": "failed", "error": result.get("error")}
-        
-        # Estimate tokens
-        input_tokens = len(str(reddit_data).split()) * 1.3
-        output_tokens = len(json.dumps(result).split()) * 1.3
-        total_tokens = int(input_tokens + output_tokens)
-        cost = result.get("cost", 0.0)
-        
-        # Update llm_task with final metrics
-        llm_task.status = "success"
-        llm_task.input_tokens = int(input_tokens)
-        llm_task.output_tokens = int(output_tokens)
-        llm_task.total_tokens = total_tokens
-        llm_task.cost_usd = cost
-        llm_task.completed_at = datetime.utcnow()
-        llm_task.duration_seconds = int(duration)
+
+        if result.get("status") != "success":
+            return {"status": "failed", "error": result.get("error", "Cluster generation failed")}
+
+        cluster_id = str(result.get("cluster_id") or f"cluster-{int(time.time())}")
+        posts_to_create: list[tuple[str, str, str | None]] = []
+
+        pillar_post = result.get("pillar_post", {})
+        if isinstance(pillar_post, dict):
+            pillar_title = str(pillar_post.get("title") or f"{niche} Guide").strip()
+            sections = pillar_post.get("sections", [])
+            section_lines = ""
+            if isinstance(sections, list):
+                section_lines = "\n".join(f"- {str(section)}" for section in sections)
+            pillar_body = f"Generated pillar post for {audience}.\n\n{section_lines}".strip()
+            posts_to_create.append((pillar_title, pillar_body, niche))
+
+        supporting_posts = result.get("supporting_posts", [])
+        if isinstance(supporting_posts, list):
+            for post in supporting_posts:
+                if not isinstance(post, dict):
+                    continue
+                title = str(post.get("title") or "").strip()
+                if not title:
+                    continue
+                keyword_value = post.get("keyword")
+                keyword = str(keyword_value).strip() if keyword_value else None
+                body = f"Generated supporting post draft for {keyword or title}."
+                posts_to_create.append((title, body, keyword))
+
+        for index, (title, body, keyword) in enumerate(posts_to_create, start=1):
+            slug_base = _slugify(f"{cluster_id}-{index}-{title}")
+            content_item = ContentItem(
+                title=title,
+                slug=_unique_slug(db, slug_base),
+                body=body,
+                keyword=keyword,
+                reddit_thread_id=cluster_id,
+                status="draft",
+                site_id=site_id_int,
+                owner_id=user_id_int,
+            )
+            db.add(content_item)
+
         db.commit()
-        
         return {
             "status": "success",
-            "cluster_id": result["cluster_id"],
-            "cost": cost,
+            "cluster_id": cluster_id,
+            "posts_created": len(posts_to_create),
+            "cost": float(result.get("cost", 0.0)),
             "task_id": self.request.id,
         }
-    
+
     except Exception as exc:
-        # Retry logic
+        db.rollback()
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc, countdown=60)
-        
-        # Final failure
-        if llm_task:
-            llm_task.status = "failed"
-            llm_task.error_message = str(exc)
-            llm_task.completed_at = datetime.utcnow()
-            db.commit()
-        
         return {"status": "failed", "error": str(exc)}
-    
+
     finally:
         db.close()
 
 
-@shared_task(bind=True, max_retries=2)
+@celery_app.task(name="publish_to_wordpress_task", bind=True, max_retries=2, default_retry_delay=120)
 def publish_to_wordpress_task(self, site_id: str, cluster_id: str):
-    """
-    Celery task: Publish cluster posts to WordPress.
-    Each post gets utm_source for revenue attribution.
-    """
-    from .models.cluster import Cluster
-    from .models.site import Site
-    from .models.content_item import ContentItem
-    from .services.wordpress_service import WordpressService
-    
+    """Publish all posts in a generated cluster to WordPress."""
     db = SessionLocal()
-    
+
     try:
-        cluster = db.query(Cluster).filter_by(cluster_id=cluster_id).first()
-        if not cluster:
-            return {"status": "failed", "error": "Cluster not found"}
-        
-        site = db.query(Site).filter_by(id=site_id).first()
-        if not site:
+        site_id_int = int(site_id)
+    except ValueError:
+        db.close()
+        return {"status": "failed", "error": "Invalid site_id"}
+
+    try:
+        site = db.query(Site).filter(Site.id == site_id_int).first()
+        if site is None:
             return {"status": "failed", "error": "Site not found"}
-        
-        wp_service = WordpressService()
+
+        posts = (
+            db.query(ContentItem)
+            .filter(ContentItem.site_id == site_id_int, ContentItem.reddit_thread_id == cluster_id)
+            .all()
+        )
+        if not posts:
+            return {"status": "failed", "error": "No posts found for cluster"}
+
+        publisher = WordpressService()
         published_count = 0
-        
-        # Publish posts (simplified: in production, would publish each individually)
-        posts = db.query(ContentItem).filter_by(cluster_id=cluster_id).all()
-        
+
         for post in posts:
-            try:
-                result = wp_service.publish_post(
-                    wp_url=site.wordpress_url,
-                    wp_username=site.wordpress_username_encrypted,
-                    wp_password=site.wordpress_password_encrypted,
-                    title=post.title,
-                    content=post.content,
-                )
-                
-                if result.get("status") == "published":
-                    post.status = "published"
-                    post.published_at = datetime.utcnow()
-                    published_count += 1
-            except Exception as e:
-                # Log but continue with other posts
-                pass
-        
+            result = publisher.publish_post(
+                wp_url=site.wp_url,
+                wp_username=site.wp_username,
+                wp_app_password=site.wp_app_password,
+                title=post.title,
+                content=post.body,
+            )
+            if result.get("status") == "published":
+                post.status = "published"
+                published_count += 1
+
         db.commit()
-        
         return {
             "status": "success",
             "cluster_id": cluster_id,
             "posts_published": published_count,
+            "task_id": self.request.id,
         }
-    
+
     except Exception as exc:
+        db.rollback()
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc, countdown=120)
         return {"status": "failed", "error": str(exc)}
-    
+
     finally:
         db.close()
 
 
-@shared_task
+@celery_app.task(name="sync_earnings_from_amazon")
 def sync_earnings_from_amazon():
-    """
-    Celery beat task: Nightly sync of earnings.
-    Runs at 02:00 UTC daily via Celery Beat.
-    """
-    from .models.user import User
-    
+    """Placeholder nightly earnings sync job for all users."""
     db = SessionLocal()
-    
     try:
-        users = db.query(User).all()
-        synced_count = len(users)
-        
-        # In production, would parse Amazon CSV, update earning_events
+        users_synced = db.query(User).count()
         return {
             "status": "success",
-            "users_synced": synced_count,
+            "users_synced": int(users_synced),
             "timestamp": datetime.utcnow().isoformat(),
         }
-    
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
-    
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)}
     finally:
         db.close()
 
 
-@shared_task
+@celery_app.task(name="calculate_revenue_share")
 def calculate_revenue_share():
-    """
-    Celery beat task: Monthly revenue-share calculation for Elite tier.
-    Creates user_revenue_share records for payout.
-    """
-    from datetime import date
-    from .models.user import User
-    
+    """Placeholder monthly revenue-share aggregation for opted-in users."""
     db = SessionLocal()
-    
     try:
-        elite_users = db.query(User).filter_by(tier="elite").all()
-        processed = 0
-        
-        # In production, would query earning_events, calculate 12% share, create payout records
-        processed = len(elite_users)
-        
+        eligible_users = db.query(User).filter(User.profitshare_enabled.is_(True)).count()
         return {
             "status": "success",
-            "elite_users_processed": processed,
+            "eligible_users_processed": int(eligible_users),
+            "timestamp": datetime.utcnow().isoformat(),
         }
-    
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
-    
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)}
     finally:
         db.close()

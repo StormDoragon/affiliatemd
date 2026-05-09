@@ -1,4 +1,5 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
 
 export type DashboardPayload = {
   summary: {
@@ -32,6 +33,36 @@ export type DashboardPayload = {
     revenue: number;
   }>;
 };
+
+function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${normalizedPath}`;
+}
+
+function buildAuthHeaders(accessToken?: string): HeadersInit | undefined {
+  if (!accessToken) {
+    return undefined;
+  }
+  return { Authorization: `Bearer ${accessToken}` };
+}
+
+function mergeDashboardPayload(payload: Partial<DashboardPayload>): DashboardPayload {
+  return {
+    ...fallbackDashboardData,
+    ...payload,
+    summary: {
+      ...fallbackDashboardData.summary,
+      ...payload.summary,
+    },
+    profit_share: {
+      ...fallbackDashboardData.profit_share,
+      ...payload.profit_share,
+    },
+    programs: payload.programs ?? fallbackDashboardData.programs,
+    posts: payload.posts ?? fallbackDashboardData.posts,
+    attribution: payload.attribution ?? fallbackDashboardData.attribution,
+  };
+}
 
 const fallbackDashboardData: DashboardPayload = {
   summary: {
@@ -91,39 +122,34 @@ const fallbackDashboardData: DashboardPayload = {
 };
 
 export async function getHealth() {
-  const response = await fetch(`${API_BASE_URL}/healthz`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("Failed to fetch API health");
+  for (const path of ["/healthz", "/health"]) {
+    const response = await fetch(buildApiUrl(path), { cache: "no-store" });
+    if (response.ok) {
+      return response.json() as Promise<{ status: string }>;
+    }
   }
-  return response.json() as Promise<{ status: string }>;
+  throw new Error("Failed to fetch API health");
 }
 
-export async function getDashboardData(): Promise<DashboardPayload> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/earnings/dashboard`, {
-      cache: "no-store",
-    });
+export async function getDashboardData(accessToken?: string): Promise<DashboardPayload> {
+  const headers = buildAuthHeaders(accessToken);
 
-    if (!response.ok) {
-      return fallbackDashboardData;
+  try {
+    for (const path of ["/earnings/dashboard", "/api/v1/earnings/dashboard"]) {
+      const response = await fetch(buildApiUrl(path), {
+        cache: "no-store",
+        headers,
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const payload = (await response.json()) as Partial<DashboardPayload>;
+      return mergeDashboardPayload(payload);
     }
 
-    const payload = (await response.json()) as Partial<DashboardPayload>;
-    return {
-      ...fallbackDashboardData,
-      ...payload,
-      summary: {
-        ...fallbackDashboardData.summary,
-        ...payload.summary,
-      },
-      profit_share: {
-        ...fallbackDashboardData.profit_share,
-        ...payload.profit_share,
-      },
-      programs: payload.programs ?? fallbackDashboardData.programs,
-      posts: payload.posts ?? fallbackDashboardData.posts,
-      attribution: payload.attribution ?? fallbackDashboardData.attribution,
-    };
+    return fallbackDashboardData;
   } catch {
     return fallbackDashboardData;
   }

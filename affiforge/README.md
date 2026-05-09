@@ -64,10 +64,10 @@ pip install -r requirements.txt
 uvicorn src.main:app --reload
 
 # Terminal 2: Celery Worker
-celery -A src.tasks worker --loglevel=info
+celery -A src.tasks:app worker --loglevel=info
 
 # Terminal 3: Celery Beat
-celery -A src.tasks beat --loglevel=info
+celery -A src.tasks:app beat --loglevel=info
 ```
 
 ### **Run Tests**
