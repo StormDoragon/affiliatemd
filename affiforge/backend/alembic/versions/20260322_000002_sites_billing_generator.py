@@ -5,9 +5,8 @@ Revises: 20260322_000001
 Create Date: 2026-03-22 00:10:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "20260322_000002"
 down_revision = "20260322_000001"
@@ -19,13 +18,15 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("stripe_customer_id", sa.String(length=255), nullable=True))
     op.add_column(
         "users",
-        sa.Column("profitshare_enabled", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("profitshare_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
 
     op.create_table(
         "sites",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("wp_url", sa.String(length=255), nullable=False),
         sa.Column("wp_username", sa.String(length=255), nullable=False),
         sa.Column("wp_app_password", sa.String(length=255), nullable=False),
@@ -36,19 +37,28 @@ def upgrade() -> None:
     op.create_index(op.f("ix_sites_user_id"), "sites", ["user_id"], unique=False)
 
     op.add_column("content_items", sa.Column("keyword", sa.String(length=255), nullable=True))
-    op.add_column("content_items", sa.Column("reddit_thread_id", sa.String(length=255), nullable=True))
+    op.add_column(
+        "content_items", sa.Column("reddit_thread_id", sa.String(length=255), nullable=True)
+    )
     op.add_column(
         "content_items",
         sa.Column("revenue_attributed", sa.Numeric(10, 2), nullable=False, server_default="0.00"),
     )
-    op.add_column(
-        "content_items",
-        sa.Column("site_id", sa.Integer(), sa.ForeignKey("sites.id", ondelete="SET NULL"), nullable=True),
-    )
+    with op.batch_alter_table("content_items") as batch:
+        batch.add_column(
+            sa.Column(
+                "site_id",
+                sa.Integer(),
+                sa.ForeignKey("sites.id", name="fk_content_items_site", ondelete="SET NULL"),
+                nullable=True,
+            )
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("content_items", "site_id")
+    with op.batch_alter_table("content_items") as batch:
+        batch.drop_constraint("fk_content_items_site", type_="foreignkey")
+        batch.drop_column("site_id")
     op.drop_column("content_items", "revenue_attributed")
     op.drop_column("content_items", "reddit_thread_id")
     op.drop_column("content_items", "keyword")

@@ -1,18 +1,31 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..dependencies import get_current_user, get_db
+from ..config import settings
+from ..dependencies import enforce_provider_use, get_current_user, get_db
 from ..models.user import User
 from ..schemas.billing import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
-    ProfitShareInvoiceRequest,
-    ProfitShareInvoiceResponse,
     ProfitShareToggleRequest,
 )
-from ..services.billing_service import BillingService
+from ..services.billing_service import SubscriptionBilling
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+
+@router.get("/status")
+def billing_status(current_user: User = Depends(get_current_user)) -> dict:
+    service = SubscriptionBilling()
+    if not service.enabled:
+        return {"enabled": False, "subscriptions": [], "prices": [], "portal_available": False}
+    enforce_provider_use(current_user.id)
+    return {
+        "enabled": True,
+        "prices": service.prices(),
+        "subscriptions": service.subscriptions(current_user.stripe_customer_id),
+        "portal_available": bool(current_user.stripe_customer_id),
+    }
 
 
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
@@ -21,20 +34,32 @@ def create_checkout_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CheckoutSessionResponse:
-    billing = BillingService()
-    checkout_url, stripe_customer_id = billing.create_checkout_session(
-        customer_id=current_user.stripe_customer_id,
-        price_id=payload.price_id,
-        success_url=payload.success_url,
-        cancel_url=payload.cancel_url,
-        email=current_user.email,
-    )
-    if stripe_customer_id and stripe_customer_id != current_user.stripe_customer_id:
-        current_user.stripe_customer_id = stripe_customer_id
-        db.add(current_user)
+    owner_id = current_user.id
+    enforce_provider_use(owner_id)
+    service = SubscriptionBilling()
+    service.require_configuration()
+    if payload.price_id not in settings.billing_prices:
+        raise HTTPException(422, "Choose a configured subscription")
+    user = db.query(User).filter(User.id == owner_id).populate_existing().with_for_update().one()
+    if not user.stripe_customer_id:
+        user.stripe_customer_id = service.create_customer(user.id, user.email)
         db.commit()
-
+        user = (
+            db.query(User).filter(User.id == owner_id).populate_existing().with_for_update().one()
+        )
+    checkout_url = service.checkout(user.stripe_customer_id, payload.price_id)
+    db.commit()
     return CheckoutSessionResponse(checkout_url=checkout_url)
+
+
+@router.post("/portal")
+def billing_portal(current_user: User = Depends(get_current_user)) -> dict[str, str]:
+    enforce_provider_use(current_user.id)
+    service = SubscriptionBilling()
+    service.require_configuration()
+    if not current_user.stripe_customer_id:
+        raise HTTPException(409, "Start checkout before opening the billing portal")
+    return {"url": service.portal(current_user.stripe_customer_id)}
 
 
 @router.post("/profitshare/toggle")
@@ -44,21 +69,12 @@ def toggle_profitshare(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, bool]:
     current_user.profitshare_enabled = payload.enabled
-    db.add(current_user)
     db.commit()
     return {"profitshare_enabled": current_user.profitshare_enabled}
 
 
-@router.post("/profitshare/invoice", response_model=ProfitShareInvoiceResponse)
-def create_profitshare_invoice(
-    payload: ProfitShareInvoiceRequest,
-    _: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> ProfitShareInvoiceResponse:
-    billing = BillingService()
-    invoice_id = billing.create_profitshare_invoice(
-        customer_id=current_user.stripe_customer_id,
-        amount=payload.amount,
-        description=payload.description,
+@router.post("/profitshare/invoice")
+def retired_profitshare_invoicing(_: User = Depends(get_current_user)):
+    raise HTTPException(
+        410, "Self-reported earnings are for reporting and cannot create Stripe invoices"
     )
-    return ProfitShareInvoiceResponse(invoice_id=invoice_id, status="created")

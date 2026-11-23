@@ -1,12 +1,8 @@
-from decimal import Decimal
-
 from pydantic import BaseModel, Field
 
 
 class CheckoutSessionRequest(BaseModel):
-    price_id: str
-    success_url: str
-    cancel_url: str
+    price_id: str = Field(min_length=1, max_length=255)
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -15,13 +11,3 @@ class CheckoutSessionResponse(BaseModel):
 
 class ProfitShareToggleRequest(BaseModel):
     enabled: bool
-
-
-class ProfitShareInvoiceRequest(BaseModel):
-    amount: Decimal = Field(gt=0)
-    description: str
-
-
-class ProfitShareInvoiceResponse(BaseModel):
-    invoice_id: str
-    status: str
