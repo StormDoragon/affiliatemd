@@ -1,0 +1,9 @@
+{$CADDY_SITE} {
+	encode zstd gzip
+	request_body {
+		max_size 256KB
+	}
+	@secure protocol https
+	header @secure Strict-Transport-Security "max-age=31536000"
+	reverse_proxy frontend:3000
+}

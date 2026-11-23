@@ -1,11 +1,16 @@
+from decimal import Decimal
+from typing import Literal
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class EarningCreate(BaseModel):
-    network: str
-    amount: float = Field(gt=0)
-    currency: str = "USD"
-    content_item_id: int
+    network: str = Field(min_length=1, max_length=120)
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    currency: Literal["USD"] = "USD"
+    content_item_id: int = Field(gt=0)
+    entry_key: UUID | None = None
 
 
 class EarningRead(BaseModel):
@@ -38,16 +43,27 @@ class OptimizationSuggestions(BaseModel):
     suggestions: list[str]
 
 
-class DashboardOverview(BaseModel):
-    summary: EarningsSummary
-    profit_share: ProfitShareBreakdown
-    suggestions: list[str]
-
-
 class ProgramEarningsBreakdown(BaseModel):
     network: str
     revenue: float
     events: int
+
+
+class PostEarnings(BaseModel):
+    id: int
+    title: str
+    status: str
+    keyword: str | None
+    revenue: float
+    published_url: str | None
+
+
+class DashboardOverview(BaseModel):
+    summary: EarningsSummary
+    profit_share: ProfitShareBreakdown
+    suggestions: list[str]
+    programs: list[ProgramEarningsBreakdown]
+    posts: list[PostEarnings]
 
 
 class MultiProgramDashboard(BaseModel):

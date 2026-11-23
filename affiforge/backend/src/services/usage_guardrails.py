@@ -1,126 +1,57 @@
-"""API usage guardrails: per-minute rate limit, cost cap, and usage alert logging."""
-
-from __future__ import annotations
-
 import logging
 import threading
 import time
-from collections import defaultdict, deque
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
+from redis import Redis, RedisError
 
 from ..config import settings
 
-logger = logging.getLogger("affiforge.guardrails")
+logger = logging.getLogger(__name__)
+_INCREMENT = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return count
+"""
+redis = Redis.from_url(settings.redis_url, socket_timeout=2, socket_connect_timeout=2)
+_lock = threading.Lock()
+_local_counts: dict[str, tuple[int, int]] = {}
 
 
-class UsageGuardrails:
-    """In-memory usage tracker for API guardrails.
-
-    This is intentionally simple for MVP use. In multi-worker production,
-    replace this with Redis-backed counters for cross-process consistency.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._events: dict[str, deque[tuple[float, float, str]]] = defaultdict(deque)
-
-    def enforce(
-        self,
-        *,
-        subject: str,
-        endpoint: str,
-        estimated_cost: float,
-        client_ip: str,
-    ) -> dict[str, float | int]:
-        if not settings.enable_api_guardrails:
-            return {
-                "requests_in_window": 0,
-                "rate_limit": 0,
-                "remaining": 0,
-                "window_cost": 0.0,
-            }
-
-        max_cost = float(settings.max_cost_per_task)
-        if estimated_cost > max_cost:
-            logger.warning(
-                "guardrail.block.cost subject=%s ip=%s endpoint=%s estimated_cost=%.6f max_cost=%.6f",
-                subject,
-                client_ip,
-                endpoint,
-                estimated_cost,
-                max_cost,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Estimated cost ${estimated_cost:.4f} exceeds max ${max_cost:.4f}",
-            )
-
-        now = time.time()
-        threshold = float(settings.api_usage_alert_ratio)
-        rate_limit = int(settings.api_rate_limit_per_minute)
-
-        with self._lock:
-            window = self._events[subject]
-            while window and (now - window[0][0]) > 60:
-                window.popleft()
-
-            if len(window) >= rate_limit:
-                logger.warning(
-                    "guardrail.block.rate_limit subject=%s ip=%s endpoint=%s limit=%d window_size=%d",
-                    subject,
-                    client_ip,
-                    endpoint,
-                    rate_limit,
-                    len(window),
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Rate limit exceeded. Please retry in a minute.",
-                )
-
-            window.append((now, estimated_cost, endpoint))
-            requests_in_window = len(window)
-            window_cost = round(sum(item[1] for item in window), 6)
-            remaining = max(rate_limit - requests_in_window, 0)
-
-        logger.info(
-            "guardrail.allow subject=%s ip=%s endpoint=%s estimated_cost=%.6f requests=%d/%d window_cost=%.6f",
-            subject,
-            client_ip,
-            endpoint,
-            estimated_cost,
-            requests_in_window,
-            rate_limit,
-            window_cost,
+def limit_requests(key: str, limit: int, seconds: int = 60) -> None:
+    if not settings.enable_api_guardrails:
+        return
+    if settings.production:
+        try:
+            count = redis.eval(_INCREMENT, 1, f"affiforge:{key}", seconds)
+        except RedisError as exc:
+            raise HTTPException(503, "Request limits are temporarily unavailable") from exc
+    else:
+        now = int(time.monotonic())
+        with _lock:
+            for name, (_, expiry) in list(_local_counts.items()):
+                if expiry <= now:
+                    del _local_counts[name]
+            previous, expiry = _local_counts.get(key, (0, now + seconds))
+            count = previous + 1
+            _local_counts[key] = (count, expiry)
+    if count > limit:
+        raise HTTPException(
+            429, "Too many requests. Try again later.", headers={"Retry-After": str(seconds)}
         )
 
-        if requests_in_window >= max(1, int(rate_limit * threshold)):
-            logger.warning(
-                "guardrail.alert.near_rate_limit subject=%s ip=%s endpoint=%s requests=%d/%d",
-                subject,
-                client_ip,
-                endpoint,
-                requests_in_window,
-                rate_limit,
-            )
 
-        if estimated_cost >= (max_cost * threshold):
-            logger.warning(
-                "guardrail.alert.near_cost_cap subject=%s ip=%s endpoint=%s estimated_cost=%.6f max_cost=%.6f",
-                subject,
-                client_ip,
-                endpoint,
-                estimated_cost,
-                max_cost,
-            )
-
-        return {
-            "requests_in_window": requests_in_window,
-            "rate_limit": rate_limit,
-            "remaining": remaining,
-            "window_cost": window_cost,
-        }
-
-
-usage_guardrails = UsageGuardrails()
+def check_generation(owner_id: int, endpoint: str, estimated_cost: float) -> None:
+    if estimated_cost > settings.max_cost_per_task:
+        raise HTTPException(400, "This request exceeds the configured per-task cost limit")
+    limit_requests(f"generation:{owner_id}", settings.api_rate_limit_per_minute)
+    limit_requests("generation:all", 100)
+    if estimated_cost:
+        limit_requests(f"ai-day:{owner_id}", 60, 86400)
+        limit_requests("ai-day:all", 600, 86400)
+    logger.info(
+        "Generation requested owner=%s operation=%s estimated_cost=%.4f",
+        owner_id,
+        endpoint,
+        estimated_cost,
+    )

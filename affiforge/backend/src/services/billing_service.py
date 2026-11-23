@@ -1,91 +1,115 @@
-"""
-Billing service: Handle subscriptions, payouts, and customer management.
-Supports Stripe subscriptions (Starter $19, Pro $49, Elite $99) + 12% revenue share.
-"""
+from hashlib import sha256
 
-from decimal import Decimal
-from datetime import datetime
-
-try:
-    import stripe
-except ImportError:
-    stripe = None
+import stripe
+from fastapi import HTTPException
 
 from ..config import settings
+from .provider_errors import IntegrationFailed, IntegrationUnavailable
 
 
-class BillingService:
-    """Stripe-based subscription and payout management."""
-    
+class SubscriptionBilling:
     def __init__(self):
-        if stripe and settings.stripe_secret_key:
-            stripe.api_key = settings.stripe_secret_key
-    
-    def create_checkout_session(
-        self,
-        customer_id: str | None,
-        price_id: str,
-        success_url: str,
-        cancel_url: str,
-        email: str,
-    ) -> tuple[str, str | None]:
-        """Create Stripe checkout session for subscription signup."""
-        if not settings.stripe_secret_key or stripe is None:
-            return (f"{success_url}?checkout=mock", customer_id)
-
-        resolved_customer_id = customer_id
-        if not resolved_customer_id:
-            customer = stripe.Customer.create(email=email)
-            resolved_customer_id = customer["id"]
-
-        session = stripe.checkout.Session.create(
-            customer=resolved_customer_id,
-            line_items=[{"price": price_id, "quantity": 1}],
-            mode="subscription",
-            success_url=success_url,
-            cancel_url=cancel_url,
+        self.enabled = not settings.demo_mode and bool(
+            settings.stripe_secret_key and settings.billing_prices
+        )
+        self.client = stripe.StripeClient(
+            settings.stripe_secret_key,
+            http_client=stripe.RequestsClient(timeout=8),
         )
 
-        return (session["url"], resolved_customer_id)
+    def require_configuration(self):
+        if not self.enabled:
+            raise IntegrationUnavailable("Stripe")
 
-    def create_profitshare_invoice(self, customer_id: str | None, amount: Decimal, description: str) -> str:
-        """Create revenue-share credit/invoice for Elite user."""
-        if not settings.stripe_secret_key or stripe is None or not customer_id:
-            return "mock-invoice"
+    def create_customer(self, user_id: int, email: str) -> str:
+        # The key ties recovery after an interrupted request to the local account.
+        customer_key = sha256(f"{settings.app_origin}|{user_id}|{email}".encode()).hexdigest()
+        try:
+            customer = self.client.v1.customers.create(
+                {"email": email, "metadata": {"affiforge_user_id": str(user_id)}},
+                options={"idempotency_key": f"affiforge-customer-{customer_key}"},
+            )
+            return customer.id
+        except stripe.StripeError as exc:
+            raise IntegrationFailed("Stripe") from exc
 
+    def prices(self) -> list[dict]:
+        plans = []
         try:
-            invoice_item = stripe.InvoiceItem.create(
-                customer=customer_id,
-                amount=int(amount * 100),
-                currency="usd",
-                description=description,
-            )
-            invoice = stripe.Invoice.create(customer=customer_id, auto_advance=True)
-            return str(invoice["id"])
-        except Exception:
-            return "invoice-failed"
-    
-    def process_refund(self, subscription_id: str, reason: str = "User earnings < $1 in 30 days") -> dict:
-        """Issue refund for users who earned <$1 in first 30 days."""
-        if not stripe or not subscription_id:
-            return {"status": "error", "message": "Invalid subscription"}
-        
+            for price_id in sorted(settings.billing_prices):
+                price = self.client.v1.prices.retrieve(price_id, {"expand": ["product"]})
+                if price.active and price.recurring and price.unit_amount is not None:
+                    plans.append(
+                        {
+                            "id": price.id,
+                            "name": price.nickname
+                            or getattr(price.product, "name", "Subscription"),
+                            "amount": price.unit_amount,
+                            "currency": price.currency.upper(),
+                            "interval": price.recurring.interval,
+                            "interval_count": price.recurring.interval_count,
+                        }
+                    )
+        except stripe.StripeError as exc:
+            raise IntegrationFailed("Stripe") from exc
+        return plans
+
+    def subscriptions(self, customer_id: str | None) -> list[dict]:
+        if customer_id is None:
+            return []
         try:
-            subscription = stripe.Subscription.retrieve(subscription_id)
-            latest_invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
-            
-            # Create credit note (refund)
-            credit_note = stripe.CreditNote.create(
-                invoice=latest_invoice.id,
-                reason="order_change",
-                memo=reason,
-                refund_amount=latest_invoice.amount_due,
+            page = self.client.v1.subscriptions.list(
+                {"customer": customer_id, "status": "all", "limit": 20}
             )
-            
-            return {
-                "status": "success",
-                "credit_note_id": credit_note.id,
-                "refund_amount": latest_invoice.amount_due / 100,
-            }
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return [
+                {"id": subscription.id, "status": subscription.status} for subscription in page.data
+            ]
+        except stripe.StripeError as exc:
+            raise IntegrationFailed("Stripe") from exc
+
+    def checkout(self, customer_id: str, price_id: str) -> str:
+        try:
+            configured_price = self.client.v1.prices.retrieve(price_id)
+            if not configured_price.active or not configured_price.recurring:
+                raise HTTPException(422, "This subscription is unavailable")
+            if any(
+                item["status"] not in {"canceled", "incomplete_expired"}
+                for item in self.subscriptions(customer_id)
+            ):
+                raise HTTPException(409, "Manage your existing subscription in the billing portal")
+            sessions = self.client.v1.checkout.sessions.list(
+                {"customer": customer_id, "status": "open", "limit": 10},
+            )
+            for session in sessions.data:
+                if session.mode != "subscription":
+                    continue
+                if session.metadata.get("affiforge_price_id") == price_id and session.url:
+                    return session.url
+                self.client.v1.checkout.sessions.expire(session.id)
+            session = self.client.v1.checkout.sessions.create(
+                {
+                    "customer": customer_id,
+                    "line_items": [{"price": price_id, "quantity": 1}],
+                    "mode": "subscription",
+                    "success_url": f"{settings.app_origin}/dashboard?billing=return#billing",
+                    "cancel_url": f"{settings.app_origin}/dashboard#billing",
+                    "metadata": {"affiforge_price_id": price_id},
+                }
+            )
+            if not session.url:
+                raise IntegrationFailed("Stripe")
+            return session.url
+        except stripe.StripeError as exc:
+            raise IntegrationFailed("Stripe") from exc
+
+    def portal(self, customer_id: str) -> str:
+        try:
+            session = self.client.v1.billing_portal.sessions.create(
+                {
+                    "customer": customer_id,
+                    "return_url": f"{settings.app_origin}/dashboard#billing",
+                }
+            )
+            return session.url
+        except stripe.StripeError as exc:
+            raise IntegrationFailed("Stripe") from exc

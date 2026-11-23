@@ -1,5 +1,7 @@
 # Service Implementation Status
 
+> Historical prototype inventory. The [production runbook](../affiforge/docs/PRODUCTION.md) lists the deployable features and integrations.
+
 **Last Updated**: March 22, 2026  
 **Status**: MVP Backend v0.1.0 — Production-ready core services, test coverage initialized
 
