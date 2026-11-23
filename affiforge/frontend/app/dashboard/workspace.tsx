@@ -87,7 +87,7 @@ function ConnectedSites({ sites, reload }: { sites: Site[]; reload: () => Promis
           <label>WordPress username<input name="username" defaultValue={selected?.wp_username} maxLength={255} required /></label>
           <label>Application password<input type="password" name="password" autoComplete="off" maxLength={255} required /></label>
           <label>Amazon Associates tag (optional)<input name="tag" defaultValue={selected?.amazon_tag} maxLength={64}
-            pattern="[-A-Za-z0-9_]*" placeholder="yourtag-20" /></label>
+            pattern="[A-Za-z0-9_\-]*" placeholder="yourtag-20" /></label>
         </div>
       </Action>
     </section>
